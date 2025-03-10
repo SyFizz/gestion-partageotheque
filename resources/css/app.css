@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+/* Styles personnalisés pour améliorer le contraste */
+.bg-primary-700 {
+    background-color: #1d4ed8 !important;
+}
+
+.text-white {
+    color: #f4f4f4 !important;
+}
+
+/* Amélioration des tableaux */
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th {
+    background-color: #f3f4f6;
+    color: #111827;
+    font-weight: 600;
+}
+
+td, th {
+    padding: 0.75rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+/* Amélioration des formulaires */
+select, input, textarea {
+    border: 1px solid #d1d5db !important;
+    background-color: #ffffff !important;
+    color: #111827 !important;
+    padding: 0.4rem;
+}
+
+/* Amélioration des boutons */
+.btn, button[type="submit"] {
+    color: #ffffff;
+}
