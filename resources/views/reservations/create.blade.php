@@ -12,42 +12,54 @@
                     @csrf
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label for="user_id" class="block text-sm font-medium text-gray-700">Demandeur</label>
-                            <select name="user_id" id="user_id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
-                                <option value="">Sélectionner un utilisateur</option>
-                                @foreach($users as $user)
-                                    <option value="{{ $user->id }}" {{ old('user_id') == $user->id ? 'selected' : '' }}>
-                                        {{ $user->name }} ({{ $user->email }})
-                                    </option>
-                                @endforeach
-                            </select>
-                            @error('user_id')
-                            <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
-                            @enderror
+                        <x-autocomplete
+                            name="user_id"
+                            label="Demandeur"
+                            placeholder="Rechercher un utilisateur..."
+                            route="{{ route('api.users.search') }}"
+                            value="{{ old('user_id') }}"
+                            required="true"
+                        />
+
+                        <x-autocomplete
+                            name="item_id"
+                            label="Objet"
+                            placeholder="Rechercher un objet..."
+                            route="{{ route('api.items.search') }}"
+                            value="{{ old('item_id', request('item_id')) }}"
+                            required="true"
+                            forReservation="true"
+                        />
+
+                        <div class="md:col-span-2">
+                            <div class="flex items-center mb-4">
+                                <input type="radio" id="reservation_type_queue" name="reservation_type" value="queue" class="mr-2" {{ old('reservation_type', 'queue') == 'queue' ? 'checked' : '' }}>
+                                <label for="reservation_type_queue" class="text-sm font-medium text-gray-700">Réserver dès que disponible (file d'attente)</label>
+                            </div>
+                            <div class="flex items-center mb-4">
+                                <input type="radio" id="reservation_type_date" name="reservation_type" value="date" class="mr-2" {{ old('reservation_type') == 'date' ? 'checked' : '' }}>
+                                <label for="reservation_type_date" class="text-sm font-medium text-gray-700">Réserver pour une date spécifique</label>
+                            </div>
                         </div>
 
-                        <div>
-                            <label for="item_id" class="block text-sm font-medium text-gray-700">Objet</label>
-                            <select name="item_id" id="item_id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
-                                <option value="">Sélectionner un objet</option>
-                                @foreach($items as $item)
-                                    <option value="{{ $item->id }}" {{ old('item_id') == $item->id || request('item_id') == $item->id ? 'selected' : '' }}>
-                                        {{ $item->name }} ({{ $item->identifier }})
-                                    </option>
-                                @endforeach
-                            </select>
-                            @error('item_id')
-                            <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
-                            @enderror
-                        </div>
+                        <div id="date_fields" class="md:col-span-2 {{ old('reservation_type') == 'date' ? '' : 'hidden' }}">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label for="reservation_date" class="block text-sm font-medium text-gray-700">Date de début</label>
+                                    <input type="date" name="reservation_date" id="reservation_date" value="{{ old('reservation_date', date('Y-m-d')) }}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
+                                    @error('reservation_date')
+                                    <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
+                                    @enderror
+                                </div>
 
-                        <div>
-                            <label for="reservation_date" class="block text-sm font-medium text-gray-700">Date de réservation</label>
-                            <input type="date" name="reservation_date" id="reservation_date" value="{{ old('reservation_date', date('Y-m-d')) }}" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
-                            @error('reservation_date')
-                            <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
-                            @enderror
+                                <div>
+                                    <label for="expiry_date" class="block text-sm font-medium text-gray-700">Date de fin</label>
+                                    <input type="date" name="expiry_date" id="expiry_date" value="{{ old('expiry_date', date('Y-m-d', strtotime('+12 days'))) }}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
+                                    @error('expiry_date')
+                                    <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
+                                    @enderror
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -66,6 +78,32 @@
                         </button>
                     </div>
                 </form>
+
+                <script>
+                    document.addEventListener('DOMContentLoaded', function() {
+                        const queueRadio = document.getElementById('reservation_type_queue');
+                        const dateRadio = document.getElementById('reservation_type_date');
+                        const dateFields = document.getElementById('date_fields');
+
+                        function toggleDateFields() {
+                            dateFields.classList.toggle('hidden', queueRadio.checked);
+
+                            if (queueRadio.checked) {
+                                document.getElementById('reservation_date').removeAttribute('required');
+                                document.getElementById('expiry_date').removeAttribute('required');
+                            } else {
+                                document.getElementById('reservation_date').setAttribute('required', 'required');
+                                document.getElementById('expiry_date').setAttribute('required', 'required');
+                            }
+                        }
+
+                        queueRadio.addEventListener('change', toggleDateFields);
+                        dateRadio.addEventListener('change', toggleDateFields);
+
+                        // État initial
+                        toggleDateFields();
+                    });
+                </script>
             </div>
         </div>
     </div>

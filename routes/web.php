@@ -199,11 +199,9 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
-// Routes d'API pour l'autocomplétion
 Route::prefix('api')->middleware('auth')->group(function () {
     Route::get('/users/search', [App\Http\Controllers\Api\UserController::class, 'search'])->name('api.users.search');
     Route::get('/items/search', [App\Http\Controllers\Api\ItemController::class, 'search'])->name('api.items.search');
 });
-
 
 require __DIR__.'/auth.php';

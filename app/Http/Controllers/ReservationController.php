@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Item;
 use App\Models\ItemStatus;
+use App\Models\Loan;
 use App\Models\Reservation;
 use App\Models\User;
 use App\Services\ActivityLogger;
@@ -64,31 +65,89 @@ class ReservationController extends Controller
         $request->validate([
             'user_id' => 'required|exists:users,id',
             'item_id' => 'required|exists:items,id',
-            'reservation_date' => 'required|date',
+            'reservation_type' => 'required|in:queue,date',
+            'reservation_date' => 'required_if:reservation_type,date|date|nullable',
+            'expiry_date' => 'required_if:reservation_type,date|date|after_or_equal:reservation_date|nullable',
             'notes' => 'nullable|string',
         ]);
 
-        // Calculer la date d'expiration (12 jours après la réservation)
-        $expiryDate = Carbon::parse($request->reservation_date)->addDays(12);
+        // Si c'est une réservation de file d'attente
+        if ($request->reservation_type === 'queue') {
+            $reservationDate = now();
+            $expiryDate = now()->addDays(12);
+        } else {
+            $reservationDate = $request->reservation_date;
+            $expiryDate = $request->expiry_date;
 
-        // Obtenir le dernier ordre de priorité pour cet objet
-        $lastPriority = Reservation::where('item_id', $request->item_id)
-            ->where('is_active', true)
-            ->max('priority_order');
+            // Vérifier s'il y a un emprunt qui chevauche la période de réservation
+            $hasOverlappingLoan = Loan::where('item_id', $request->item_id)
+                ->where(function($query) use ($request, $expiryDate) {
+                    $query->where(function($q) use ($request, $expiryDate) {
+                        // Vérifier si l'emprunt est en cours et sa date de retour prévue est après la date de début de réservation
+                        $q->whereNull('return_date')
+                            ->where('due_date', '>=', $request->reservation_date);
+                    })->orWhere(function($q) use ($request, $expiryDate) {
+                        // Ou si l'emprunt futur chevauche la période de réservation
+                        $q->where('loan_date', '<=', $expiryDate)
+                            ->where('due_date', '>=', $request->reservation_date);
+                    });
+                })
+                ->exists();
+
+            // Vérifier s'il y a une réservation qui chevauche la période
+            $hasOverlappingReservation = Reservation::where('item_id', $request->item_id)
+                ->where('is_active', true)
+                ->where(function($query) use ($request, $expiryDate) {
+                    $query->where(function($q) use ($request, $expiryDate) {
+                        // Début de la réservation pendant une autre réservation
+                        $q->where('reservation_date', '<=', $request->reservation_date)
+                            ->where('expiry_date', '>=', $request->reservation_date);
+                    })->orWhere(function($q) use ($request, $expiryDate) {
+                        // Fin de la réservation pendant une autre réservation
+                        $q->where('reservation_date', '<=', $expiryDate)
+                            ->where('expiry_date', '>=', $expiryDate);
+                    })->orWhere(function($q) use ($request, $expiryDate) {
+                        // La réservation englobe entièrement une autre
+                        $q->where('reservation_date', '>=', $request->reservation_date)
+                            ->where('expiry_date', '<=', $expiryDate);
+                    });
+                })
+                ->exists();
+
+            if ($hasOverlappingLoan) {
+                return back()->withInput()->withErrors([
+                    'reservation_date' => 'L\'objet est déjà emprunté pendant la période de réservation.'
+                ]);
+            }
+
+            if ($hasOverlappingReservation) {
+                return back()->withInput()->withErrors([
+                    'reservation_date' => 'L\'objet est déjà réservé pendant la période demandée.'
+                ]);
+            }
+        }
 
         $reservation = Reservation::create([
             'user_id' => $request->user_id,
             'item_id' => $request->item_id,
-            'reservation_date' => $request->reservation_date,
+            'reservation_date' => $reservationDate,
             'expiry_date' => $expiryDate,
-            'priority_order' => $lastPriority ? $lastPriority + 1 : 1,
+            'priority_order' => 999, // Valeur temporaire élevée
             'is_active' => true,
             'notes' => $request->notes,
             'created_by' => Auth::id(),
         ]);
 
+        // Réorganiser les priorités en fonction du type de réservation
+        $this->reorderReservations($request->item_id);
+
         // Si c'est la première réservation et que l'objet est disponible, le marquer comme réservé
-        if ($lastPriority === null && $reservation->item->status->slug === 'in-stock') {
+        $isFirstPriority = Reservation::where('item_id', $request->item_id)
+                ->where('is_active', true)
+                ->where('priority_order', 1)
+                ->value('id') === $reservation->id;
+
+        if ($isFirstPriority && $reservation->item->status->slug === 'in-stock') {
             $reservedStatus = ItemStatus::where('slug', 'reserved')->first();
             $reservation->item->update(['item_status_id' => $reservedStatus->id]);
         }
@@ -99,6 +158,31 @@ class ReservationController extends Controller
             ->with('success', 'Réservation créée avec succès.');
     }
 
+    private function reorderReservations($itemId)
+    {
+        // Récupérer d'abord les réservations en file d'attente (sans date spécifique)
+        $queueReservations = Reservation::where('item_id', $itemId)
+            ->where('is_active', true)
+            ->where('reservation_date', '<=', now())
+            ->orderBy('created_at')
+            ->get();
+
+        // Puis les réservations avec date spécifique
+        $dateReservations = Reservation::where('item_id', $itemId)
+            ->where('is_active', true)
+            ->where('reservation_date', '>', now())
+            ->orderBy('reservation_date')
+            ->get();
+
+        // Combiner les deux collections
+        $allReservations = $queueReservations->concat($dateReservations);
+
+        // Réindexer les priorités
+        $priority = 1;
+        foreach ($allReservations as $res) {
+            $res->update(['priority_order' => $priority++]);
+        }
+    }
     public function show(Reservation $reservation)
     {
         return view('reservations.show', compact('reservation'));
@@ -125,6 +209,74 @@ class ReservationController extends Controller
             'notes' => 'nullable|string',
         ]);
 
+        // Vérifier s'il y a un emprunt qui chevauche la période de réservation (en excluant la réservation actuelle)
+        // Vérifier s'il y a un emprunt qui chevauche la période de réservation
+        // Vérifier s'il y a un emprunt qui chevauche la période de réservation (en excluant la réservation actuelle)
+        $hasOverlappingLoan = Loan::where('item_id', $reservation->item_id)
+            ->where(function($query) use ($request) {
+                $query->where(function($q) use ($request) {
+                    // Vérifier si l'emprunt est en cours et sa date de retour prévue est après la date de début de réservation
+                    $q->whereNull('return_date')
+                        ->where('due_date', '>=', $request->reservation_date);
+                })->orWhere(function($q) use ($request) {
+                    // Ou si l'emprunt futur chevauche la période de réservation
+                    $q->where('loan_date', '<=', $request->expiry_date)
+                        ->where('due_date', '>=', $request->reservation_date);
+                });
+            })
+            ->exists();
+
+        // Vérifier s'il y a une réservation qui chevauche la période (en excluant la réservation actuelle)
+        $hasOverlappingReservation = Reservation::where('item_id', $reservation->item_id)
+            ->where('id', '!=', $reservation->id)
+            ->where('is_active', true)
+            ->where(function($query) use ($request) {
+                $query->where(function($q) use ($request) {
+                    // Début de la réservation pendant une autre réservation
+                    $q->where('reservation_date', '<=', $request->reservation_date)
+                        ->where('expiry_date', '>=', $request->reservation_date);
+                })->orWhere(function($q) use ($request) {
+                    // Fin de la réservation pendant une autre réservation
+                    $q->where('reservation_date', '<=', $request->expiry_date)
+                        ->where('expiry_date', '>=', $request->expiry_date);
+                })->orWhere(function($q) use ($request) {
+                    // La réservation englobe entièrement une autre
+                    $q->where('reservation_date', '>=', $request->reservation_date)
+                        ->where('expiry_date', '<=', $request->expiry_date);
+                });
+            })
+            ->exists();
+
+        if ($hasOverlappingLoan) {
+            return back()->withInput()->withErrors([
+                'reservation_date' => 'L\'objet est déjà emprunté pendant la période de réservation.'
+            ]);
+        }
+
+        if ($hasOverlappingReservation) {
+            return back()->withInput()->withErrors([
+                'reservation_date' => 'L\'objet est déjà réservé pendant la période demandée.'
+            ]);
+        }
+
+        // Si la réservation passe de active à inactive, vérifier si elle était la première dans la file d'attente
+        if ($reservation->is_active && !($request->is_active ?? false)) {
+            if ($reservation->priority_order === 1) {
+                // Vérifier s'il y a d'autres réservations actives pour cet objet
+                $nextReservation = Reservation::where('item_id', $reservation->item_id)
+                    ->where('is_active', true)
+                    ->where('id', '!=', $reservation->id)
+                    ->orderBy('priority_order')
+                    ->first();
+
+                // Si l'objet était marqué comme réservé et il n'y a pas d'autres réservations, le remettre en stock
+                if (!$nextReservation && $reservation->item->status->slug === 'reserved') {
+                    $inStockStatus = ItemStatus::where('slug', 'in-stock')->first();
+                    $reservation->item->update(['item_status_id' => $inStockStatus->id]);
+                }
+            }
+        }
+
         $reservation->update([
             'user_id' => $request->user_id,
             'reservation_date' => $request->reservation_date,
@@ -139,7 +291,6 @@ class ReservationController extends Controller
         return redirect()->route('reservations.index')
             ->with('success', 'Réservation mise à jour avec succès.');
     }
-
     public function reserve(Request $request, Item $item)
     {
         // Vérifier si l'objet est disponible pour la réservation
@@ -245,4 +396,5 @@ class ReservationController extends Controller
 
         return response()->json(['success' => true]);
     }
+
 }

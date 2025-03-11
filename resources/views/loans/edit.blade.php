@@ -13,19 +13,14 @@
                     @method('PUT')
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label for="user_id" class="block text-sm font-medium text-gray-700">Emprunteur</label>
-                            <select name="user_id" id="user_id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50">
-                                @foreach($users as $user)
-                                    <option value="{{ $user->id }}" {{ old('user_id', $loan->user_id) == $user->id ? 'selected' : '' }}>
-                                        {{ $user->name }} ({{ $user->email }})
-                                    </option>
-                                @endforeach
-                            </select>
-                            @error('user_id')
-                            <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
-                            @enderror
-                        </div>
+                        <x-autocomplete
+                            name="user_id"
+                            label="Emprunteur"
+                            placeholder="Rechercher un utilisateur..."
+                            route="{{ route('api.users.search') }}"
+                            value="{{ old('user_id', $loan->user_id) }}"
+                            required="true"
+                        />
 
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Objet</label>

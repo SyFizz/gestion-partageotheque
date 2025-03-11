@@ -95,7 +95,7 @@
                                         @if(!$loan->return_date && auth()->user()->hasPermission('return-loan'))
                                             <form action="{{ route('loans.return', $loan) }}" method="POST" class="inline">
                                                 @csrf
-                                                <button type="submit" class="text-green-600 hover:text-green-900">Retourner</button>
+                                                <button type="submit" class="!text-green-600 hover:!text-green-900">Retourner</button>
                                             </form>
                                         @endif
 
